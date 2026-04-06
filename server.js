@@ -285,6 +285,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === '/api/config') {
+      sendJson(res, 200, { mapsKey: process.env.GOOGLE_MAPS_KEY || '' });
+      return;
+    }
+
     const m = url.pathname.match(/^\/api\/unit\/(001|002|003)\/bundle$/);
     if (m) {
       try { sendJson(res, 200, await buildBundle(m[1])); } catch (error) { sendJson(res, 502, { error: errMsg(error) }); }
