@@ -200,9 +200,11 @@ async function buildBundle(unit) {
   const key = UNIT_KEYS[unit];
   if (!key) throw new Error(`Unknown unit ${unit}`);
 
-  console.log(`[bundle] unit=${unit} key=${key.slice(0,8)}…`);
-  const sites = await fetchPaginated(`${SITE_BASE}/sites?pageSize=${PAGE_SIZE}`, key);
-  console.log(`[bundle] unit=${unit} → ${sites.length} site(s): ${sites.map(s => s.siteId || s.id || '?').join(', ')}`);
+  const siteId = process.env[`UNIFI_SITE_${unit}`] || '';
+  const allSites = await fetchPaginated(`${SITE_BASE}/sites?pageSize=${PAGE_SIZE}`, key);
+  console.log(`[bundle] unit=${unit} siteFilter=${siteId||'(none)'} sites:\n${allSites.map(s => `  ${s.siteId||s.id||'?'} — ${(s.meta||{}).name||(s.meta||{}).desc||'(no name)'}`).join('\n')}`);
+  const sites = siteId ? allSites.filter(s => (s.siteId || s.id) === siteId) : allSites;
+
   const results = await Promise.allSettled([
     fetchPaginated(`${SITE_BASE}/hosts?pageSize=${PAGE_SIZE}`, key),
     fetchJson(`${EA_BASE}/isp-metrics/1h?duration=30d`, key),
@@ -213,14 +215,19 @@ async function buildBundle(unit) {
   const hosts = results[0].status === 'fulfilled' ? results[0].value : [];
   const peplinkGps = results[3].status === 'fulfilled' ? results[3].value : null;
 
+  const raw1h = results[1].status === 'fulfilled' && Array.isArray(results[1].value.data) ? results[1].value.data : [];
+  const raw5m = results[2].status === 'fulfilled' && Array.isArray(results[2].value.data) ? results[2].value.data : [];
+  const ispMetrics1h = siteId ? raw1h.filter(m => m.siteId === siteId) : raw1h;
+  const ispMetrics5m = siteId ? raw5m.filter(m => m.siteId === siteId) : raw5m;
+
   return {
     source: 'live',
     fetchedAt: new Date().toISOString(),
     sites,
     hosts,
     gps: peplinkGps || extractGps(hosts),
-    ispMetrics1h: results[1].status === 'fulfilled' && Array.isArray(results[1].value.data) ? results[1].value.data : [],
-    ispMetrics5m: results[2].status === 'fulfilled' && Array.isArray(results[2].value.data) ? results[2].value.data : [],
+    ispMetrics1h,
+    ispMetrics5m,
     errors: compact({
       hosts: results[0].status === 'rejected' ? errMsg(results[0].reason) : '',
       metrics1h: results[1].status === 'rejected' ? errMsg(results[1].reason) : '',
