@@ -252,9 +252,26 @@ function runChrome(args) {
   });
 }
 
+async function buildPreloadedHtml(query) {
+  const unit = query.unit || '003';
+  const bundle = await buildBundle(unit);
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const preload = {
+    unit,
+    client: query.client || '',
+    show: query.show || '',
+    email: query.email || '',
+    view: query.view || 'all',
+    range: query.range || '24h',
+    bundle
+  };
+  const safeJson = JSON.stringify(preload).replace(/<\/script>/gi, '<\\/script>');
+  return html.replace('</body>', `<script>window.__CLB_DATA__=${safeJson};</script>\n</body>`);
+}
+
 async function renderPdf(query) {
   const tmp = path.join(os.tmpdir(), `clb360-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
-  const page = `http://localhost:${PORT}/index.html?unit=${encodeURIComponent(query.unit || '003')}&view=${encodeURIComponent(query.view || 'all')}&range=${encodeURIComponent(query.range || '24h')}&client=${encodeURIComponent(query.client || '')}&show=${encodeURIComponent(query.show || '')}&email=${encodeURIComponent(query.email || '')}`;
+  const page = `http://localhost:${PORT}/api/render-page?unit=${encodeURIComponent(query.unit || '003')}&view=${encodeURIComponent(query.view || 'all')}&range=${encodeURIComponent(query.range || '24h')}&client=${encodeURIComponent(query.client || '')}&show=${encodeURIComponent(query.show || '')}&email=${encodeURIComponent(query.email || '')}`;
   await runChrome(['--headless', '--disable-gpu', '--no-sandbox', `--print-to-pdf=${tmp}`, '--print-to-pdf-no-header', page]);
   const data = fs.readFileSync(tmp);
   fs.unlinkSync(tmp);
@@ -266,7 +283,7 @@ async function renderPng(query) {
   const view = query.view || 'overview';
   const url = view === 'launch'
     ? `http://localhost:${PORT}/index.html`
-    : `http://localhost:${PORT}/index.html?autostart=1&unit=${encodeURIComponent(query.unit || '003')}&view=${encodeURIComponent(view)}&range=${encodeURIComponent(query.range || '24h')}&client=${encodeURIComponent(query.client || '')}&show=${encodeURIComponent(query.show || '')}&email=${encodeURIComponent(query.email || '')}`;
+    : `http://localhost:${PORT}/api/render-page?unit=${encodeURIComponent(query.unit || '003')}&view=${encodeURIComponent(view)}&range=${encodeURIComponent(query.range || '24h')}&client=${encodeURIComponent(query.client || '')}&show=${encodeURIComponent(query.show || '')}&email=${encodeURIComponent(query.email || '')}`;
   const size = view === 'launch' ? '1600,1100' : '1600,1500';
   await runChrome(['--headless', '--disable-gpu', '--no-sandbox', `--window-size=${size}`, `--screenshot=${tmp}`, url]);
   const data = fs.readFileSync(tmp);
@@ -293,6 +310,17 @@ const server = http.createServer(async (req, res) => {
     const m = url.pathname.match(/^\/api\/unit\/(001|002|003)\/bundle$/);
     if (m) {
       try { sendJson(res, 200, await buildBundle(m[1])); } catch (error) { sendJson(res, 502, { error: errMsg(error) }); }
+      return;
+    }
+
+    if (url.pathname === '/api/render-page') {
+      try {
+        const html = await buildPreloadedHtml(Object.fromEntries(url.searchParams.entries()));
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(html);
+      } catch (error) {
+        sendJson(res, 500, { error: errMsg(error) });
+      }
       return;
     }
 
