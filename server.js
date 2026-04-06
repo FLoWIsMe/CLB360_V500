@@ -200,7 +200,9 @@ async function buildBundle(unit) {
   const key = UNIT_KEYS[unit];
   if (!key) throw new Error(`Unknown unit ${unit}`);
 
+  console.log(`[bundle] unit=${unit} key=${key.slice(0,8)}…`);
   const sites = await fetchPaginated(`${SITE_BASE}/sites?pageSize=${PAGE_SIZE}`, key);
+  console.log(`[bundle] unit=${unit} → ${sites.length} site(s): ${sites.map(s => s.siteId || s.id || '?').join(', ')}`);
   const results = await Promise.allSettled([
     fetchPaginated(`${SITE_BASE}/hosts?pageSize=${PAGE_SIZE}`, key),
     fetchJson(`${EA_BASE}/isp-metrics/1h?duration=30d`, key),
