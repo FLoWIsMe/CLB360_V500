@@ -202,13 +202,6 @@ async function buildBundle(unit) {
 
   const siteId = process.env[`UNIFI_SITE_${unit}`] || '';
   const allSites = await fetchPaginated(`${SITE_BASE}/sites?pageSize=${PAGE_SIZE}`, key);
-  console.log(`[bundle] unit=${unit} siteFilter=${siteId||'(none)'} sites:\n${allSites.map(s => {
-    const st = s.statistics || {};
-    const gw = (st.gateway || {}).shortname || '?';
-    const isp = (st.ispInfo || {}).name || (st.ispInfo || {}).organization || '?';
-    const ip = st.hostIp || '?';
-    return `  ${s.siteId||s.id||'?'} hostId=${s.hostId||'?'} gw=${gw} isp=${isp} ip=${ip}`;
-  }).join('\n')}`);
   const sites = siteId ? allSites.filter(s => (s.siteId || s.id) === siteId) : allSites;
 
   const results = await Promise.allSettled([
