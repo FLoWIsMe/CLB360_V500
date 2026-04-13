@@ -295,7 +295,7 @@ function processMetrics(bundle, range) {
       uploadBytes: (p.uk * 1000 / 8) * intervalSec,
       latencyMs: p.latc ? p.lat / p.latc : 0,
       packetLoss: p.plc ? p.pl / p.plc : 0,
-      uptimePct: p.upc ? p.up / p.upc : 100,
+      uptimePct: p.upc ? p.up / p.upc : null,
       downtimeSec: p.dtimec ? p.dtime / p.dtimec : 0,
     }));
 
@@ -319,7 +319,7 @@ function processMetrics(bundle, range) {
     downloadBytes: b.dl, uploadBytes: b.ul, totalBytes: b.dl + b.ul,
     latencyMs: b.latc ? b.lat / b.latc : 0,
     packetLoss: b.plc ? b.pl / b.plc : 0,
-    uptimePct: b.upc ? b.up / b.upc : 100,
+    uptimePct: b.upc ? b.up / b.upc : null,
     downtimeMin: b.dtime / 60,
   }));
 
@@ -328,7 +328,8 @@ function processMetrics(bundle, range) {
   const withLat = rawPoints.filter(p => p.latencyMs > 0);
   const avgLat = withLat.length ? withLat.reduce((s, p) => s + p.latencyMs, 0) / withLat.length : 0;
   const avgPl = rawPoints.length ? rawPoints.reduce((s, p) => s + p.packetLoss, 0) / rawPoints.length : 0;
-  const avgUp = rawPoints.length ? rawPoints.reduce((s, p) => s + p.uptimePct, 0) / rawPoints.length : 99;
+  const withUp = rawPoints.filter(p => p.uptimePct !== null);
+  const avgUp = withUp.length ? withUp.reduce((s, p) => s + p.uptimePct, 0) / withUp.length : null;
   const totalDowntimeMin = rawPoints.reduce((s, p) => s + p.downtimeSec, 0) / 60;
 
   return { totalDl, totalUl, avgLat, avgPl, avgUp, totalDowntimeMin, buckets };
@@ -379,7 +380,7 @@ async function buildReportHtml(query) {
   const externalIp = (stats.wans && stats.wans.WAN && stats.wans.WAN.externalIp) || '—';
   const wanUptime = (stats.percentages && stats.percentages.wanUptime) || null;
   const currentUptime = wanUptime !== null ? wanUptime : avgUp;
-  const deviceHealthPct = totalDev > 0 ? (onlineDev / totalDev) * 100 : 100;
+  const deviceHealthPct = totalDev > 0 ? (onlineDev / totalDev) * 100 : null;
   const gps = bundle.gps || {};
   const location = gps.label || '—';
   const coords = gps.lat && gps.lng ? `${Number(gps.lat).toFixed(4)}, ${Number(gps.lng).toFixed(4)}` : '—';
@@ -393,13 +394,13 @@ async function buildReportHtml(query) {
   const generatedAt = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   const title = show || client || `Unit ${unit}`;
 
-  const uptimePctClass = currentUptime >= 99 ? 'good' : currentUptime >= 95 ? 'warn' : 'bad';
+  const uptimePctClass = currentUptime === null ? '' : currentUptime >= 99 ? 'good' : currentUptime >= 95 ? 'warn' : 'bad';
   const latClass = avgLat < 30 ? 'good' : avgLat < 80 ? 'warn' : 'bad';
   const plClass = avgPl < 1 ? 'good' : avgPl < 3 ? 'warn' : 'bad';
-  const healthClass = deviceHealthPct >= 90 ? 'good' : deviceHealthPct >= 70 ? 'warn' : 'bad';
+  const healthClass = deviceHealthPct === null ? '' : deviceHealthPct >= 90 ? 'good' : deviceHealthPct >= 70 ? 'warn' : 'bad';
 
   const tableRows = buckets.map(b => {
-    const upClass = b.uptimePct >= 99 ? 'good' : b.uptimePct >= 95 ? 'warn' : 'bad';
+    const upClass = b.uptimePct === null ? '' : b.uptimePct >= 99 ? 'good' : b.uptimePct >= 95 ? 'warn' : 'bad';
     const lClass = b.latencyMs > 0 ? (b.latencyMs < 30 ? 'good' : b.latencyMs < 80 ? 'warn' : 'bad') : '';
     const plRowClass = b.packetLoss < 1 ? 'good' : b.packetLoss < 3 ? 'warn' : 'bad';
     const dtMin = Math.round(b.downtimeMin);
@@ -408,7 +409,7 @@ async function buildReportHtml(query) {
       <td class="num">${fmtBytes(b.downloadBytes)}</td>
       <td class="num">${fmtBytes(b.uploadBytes)}</td>
       <td class="num"><strong>${fmtBytes(b.totalBytes)}</strong></td>
-      <td class="num ${upClass}">${fmtPct(b.uptimePct, 1)}</td>
+      <td class="num ${upClass}">${b.uptimePct !== null ? fmtPct(b.uptimePct, 1) : '<span style="color:#bbb">—</span>'}</td>
       <td class="num">${dtMin > 0 ? `${dtMin}m` : '<span style="color:#bbb">—</span>'}</td>
       <td class="num ${lClass}">${b.latencyMs > 0 ? `${fmtNum(b.latencyMs, 0)} ms` : '<span style="color:#bbb">—</span>'}</td>
       <td class="num ${plRowClass}">${fmtPct(b.packetLoss, 2)}</td>
@@ -496,7 +497,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="kpi-sub">${fmtBytes(totalDl)} down &nbsp;/&nbsp; ${fmtBytes(totalUl)} up</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-value ${uptimePctClass}">${fmtPct(currentUptime, 1)}</div>
+        <div class="kpi-value ${uptimePctClass}">${currentUptime !== null ? fmtPct(currentUptime, 1) : '—'}</div>
         <div class="kpi-label">WAN Uptime</div>
         <div class="kpi-sub">Downtime this period: ${escHtml(downtimeLabel)}</div>
       </div>
@@ -516,7 +517,7 @@ tbody tr:last-child td{border-bottom:none}
         <div class="kpi-sub">Lower is better · 0% is ideal</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-value ${healthClass}">${fmtPct(deviceHealthPct, 0)}</div>
+        <div class="kpi-value ${healthClass}">${deviceHealthPct !== null ? fmtPct(deviceHealthPct, 0) : '—'}</div>
         <div class="kpi-label">Device Health</div>
         <div class="kpi-sub">${onlineDev} online / ${totalDev} managed</div>
       </div>
