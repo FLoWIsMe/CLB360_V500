@@ -219,6 +219,29 @@ async function buildBundle(unit) {
   const ispMetrics1h = siteId ? raw1h.filter(m => m.siteId === siteId) : raw1h;
   const ispMetrics5m = siteId ? raw5m.filter(m => m.siteId === siteId) : raw5m;
 
+  // Warn when no site filter is set and multiple sites are being summed — this is
+  // the most common cause of inflated totals vs what the UniFi UI shows per-site.
+  const uniqueSiteIds1h = new Set(ispMetrics1h.map(m => m.siteId).filter(Boolean));
+  const uniqueSiteIds5m = new Set(ispMetrics5m.map(m => m.siteId).filter(Boolean));
+  if (!siteId && (uniqueSiteIds1h.size > 1 || uniqueSiteIds5m.size > 1)) {
+    const count = Math.max(uniqueSiteIds1h.size, uniqueSiteIds5m.size);
+    console.warn(
+      `[CLB360] Unit ${unit}: No UNIFI_SITE_${unit} env var set — summing ${count} site(s) worth of ISP metrics. ` +
+      `Set UNIFI_SITE_${unit} to a specific siteId to match what the UniFi UI shows per site. ` +
+      `Use /api/unit/${unit}/raw-metrics to inspect values.`
+    );
+  }
+
+  // Flag whether any entries lack a siteId — these may be global aggregates that double-count.
+  const noSiteEntries1h = ispMetrics1h.filter(m => !m.siteId).length;
+  const noSiteEntries5m = ispMetrics5m.filter(m => !m.siteId).length;
+  if (noSiteEntries1h > 0 || noSiteEntries5m > 0) {
+    console.warn(
+      `[CLB360] Unit ${unit}: ${noSiteEntries1h} 1h and ${noSiteEntries5m} 5m metric entries have no siteId — ` +
+      `these may be global aggregates. They are excluded from site-filtered views but included when no site filter is set.`
+    );
+  }
+
   return {
     source: 'live',
     fetchedAt: new Date().toISOString(),
@@ -227,6 +250,7 @@ async function buildBundle(unit) {
     gps: peplinkGps || extractGps(hosts),
     ispMetrics1h,
     ispMetrics5m,
+    siteCount: Math.max(uniqueSiteIds1h.size, uniqueSiteIds5m.size),
     errors: compact({
       hosts: results[0].status === 'rejected' ? errMsg(results[0].reason) : '',
       metrics1h: results[1].status === 'rejected' ? errMsg(results[1].reason) : '',
@@ -630,6 +654,57 @@ const server = http.createServer(async (req, res) => {
     const m = url.pathname.match(/^\/api\/unit\/(001|002|003)\/bundle$/);
     if (m) {
       try { sendJson(res, 200, await buildBundle(m[1])); } catch (error) { sendJson(res, 502, { error: errMsg(error) }); }
+      return;
+    }
+
+    // ── Diagnostic: inspect raw kbps values vs calculated bytes ──────────────
+    const mRaw = url.pathname.match(/^\/api\/unit\/(001|002|003)\/raw-metrics$/);
+    if (mRaw) {
+      try {
+        const bundle = await buildBundle(mRaw[1]);
+        const summarise = (entries, intervalSec) => {
+          const siteIds = new Set();
+          let totalPeriods = 0;
+          const samples = [];
+          for (const entry of (entries || [])) {
+            if (entry.siteId) siteIds.add(entry.siteId);
+            for (const period of (entry.periods || [])) {
+              totalPeriods++;
+              const wan = ((period.data || {}).wan) || {};
+              const dl = wan.download_kbps || 0;
+              const ul = wan.upload_kbps || 0;
+              if (samples.length < 5) {
+                samples.push({
+                  metricTime: period.metricTime || period.timestamp,
+                  siteId: entry.siteId || null,
+                  download_kbps: dl,
+                  upload_kbps: ul,
+                  // What the formula produces:
+                  formula_dl_bytes: Math.round((dl * 1000 / 8) * intervalSec),
+                  formula_ul_bytes: Math.round((ul * 1000 / 8) * intervalSec),
+                  // Raw totals without interval multiply (in case kbps is actually "total kb"):
+                  alt_dl_bytes: Math.round(dl * 1000 / 8),
+                  alt_ul_bytes: Math.round(ul * 1000 / 8),
+                });
+              }
+            }
+          }
+          return { siteCount: siteIds.size, siteIds: [...siteIds], totalPeriods, intervalSec, samples };
+        };
+        sendJson(res, 200, {
+          unit: mRaw[1],
+          fetchedAt: bundle.fetchedAt,
+          errors: bundle.errors,
+          metrics1h: summarise(bundle.ispMetrics1h, 3600),
+          metrics5m: summarise(bundle.ispMetrics5m, 300),
+          note: [
+            'formula_*_bytes = (kbps * 1000/8) * intervalSec — used by the dashboard (assumes avg-kbps-over-period)',
+            'alt_*_bytes    = kbps * 1000/8            — used if kbps is actually total-kb-for-period',
+            'Compare formula_dl_bytes vs UniFi UI for the same period to confirm which is correct.',
+            'If siteCount > 1 without UNIFI_SITE_xxx set, all sites are being summed (expected for multi-site).',
+          ]
+        });
+      } catch (error) { sendJson(res, 502, { error: errMsg(error) }); }
       return;
     }
 
