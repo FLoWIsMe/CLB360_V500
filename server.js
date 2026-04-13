@@ -605,7 +605,7 @@ async function buildPreloadedHtml(query) {
     bundle
   };
   const safeJson = JSON.stringify(preload).replace(/<\/script>/gi, '<\\/script>');
-  return html.replace('</body>', `<script>window.__CLB_DATA__=${safeJson};</script>\n</body>`);
+  return html.replace('</head>', `<script>window.__CLB_DATA__=${safeJson};</script>\n</head>`);
 }
 
 async function renderPdf(query) {
@@ -747,6 +747,33 @@ const server = http.createServer(async (req, res) => {
         const data = await renderPng(Object.fromEntries(url.searchParams.entries()));
         res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Disposition': 'attachment; filename="clb360-report.png"', 'Cache-Control': 'no-store' });
         res.end(data);
+      } catch (error) {
+        sendJson(res, 500, { error: errMsg(error) });
+      }
+      return;
+    }
+
+    if (url.pathname === '/home' || url.pathname === '/home/') {
+      const file = path.join(ROOT, 'index.html');
+      fs.readFile(file, (error, data) => {
+        if (error) { sendJson(res, 404, { error: 'Not found' }); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(data);
+      });
+      return;
+    }
+
+    const mUnitPath = url.pathname.match(/^\/unit([123])(?:\/)?$/);
+    if (mUnitPath) {
+      const unitMap = { '1': '001', '2': '002', '3': '003' };
+      const unit = unitMap[mUnitPath[1]];
+      try {
+        const params = Object.fromEntries(url.searchParams.entries());
+        params.unit = unit;
+        const html = await buildPreloadedHtml(params);
+        const singleHtml = html.replace('</head>', '<script>window.__CLB_SINGLE__=true;</script>\n</head>');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(singleHtml);
       } catch (error) {
         sendJson(res, 500, { error: errMsg(error) });
       }
